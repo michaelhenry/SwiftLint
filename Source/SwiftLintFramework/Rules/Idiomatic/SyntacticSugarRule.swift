@@ -5,9 +5,30 @@ public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProv
     public var configuration = SeverityConfiguration(.warning)
 
     private var pattern: String {
-        let types = ["Optional", "ImplicitlyUnwrappedOptional", "Array", "Dictionary"]
-        let negativeLookBehind = "(?:(?<!\\.)|Swift\\.)"
-        return negativeLookBehind + "\\b(" + types.joined(separator: "|") + ")\\s*<.*?>"
+        let types = ["Swift.Optional", "Swift.ImplicitlyUnwrappedOptional", "Swift.Array", "Swift.Dictionary",
+                     "Optional", "ImplicitlyUnwrappedOptional", "Array", "Dictionary"]
+        let negativeLookBehind = "(?:(?<!\\.))"
+        return negativeLookBehind + "\\b(" + types.joined(separator: "|") + ")\\s*"
+        // Open generic
+        + "(<\\s*)"
+
+        // Everything but new generic
+        + "[^<]*?"
+
+        // Optional inner generic
+        + "(?:<[^<]*?>)?"
+
+        // Everything but new generic
+        + "[^<]*?"
+
+        // 2nd Optional inner generic (as value type in dictionary)
+        + "(?:<[^<]*?>)?"
+
+        // Everything but new generic
+        + "[^<]*?"
+
+        // Closed generic
+        + "(\\s*>)"
     }
 
     public init() {}
@@ -53,7 +74,7 @@ public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProv
         ],
         corrections: [
             Example("let x: Array<String>"): Example("let x: [String]"),
-            Example("let x: Array< String >"): Example("let x: [ String ]"),
+            Example("let x: Array< String >"): Example("let x: [String]"),
             Example("let x: Dictionary<Int, String>"): Example("let x: [Int: String]"),
             Example("let x: Dictionary<Int , String>"): Example("let x: [Int : String]"),
             Example("let x: Optional<Int>"): Example("let x: Int?"),
@@ -64,7 +85,17 @@ public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProv
             Example("func x(a: [Int], b: Int) -> Dictionary<Int, String>"):
                 Example("func x(a: [Int], b: Int) -> [Int: String]"),
             Example("let x = Array<String>.array(of: object)"): Example("let x = [String].array(of: object)"),
-            Example("let x: Swift.Optional<String>"): Example("let x: String?")
+            Example("let x: Swift.Optional<String>"): Example("let x: String?"),
+            Example("let x:Dictionary<String, Dictionary<Int, Int>>"): Example("let x:[String: [Int: Int]]"),
+            Example("let x:Dictionary<Dictionary<Int, Int>, String>"): Example("let x:[[Int: Int]: String]"),
+            Example("""
+                    enum Box<T> {}
+                    let x:Dictionary<Box<String>, Box<Bool>>
+                    """):
+                Example("""
+                        enum Box<T> {}
+                        let x:[Box<String>: Box<Bool>]
+                        """)
         ]
     )
 
@@ -86,43 +117,60 @@ public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProv
     public func substitution(for violationRange: NSRange, in file: SwiftLintFile) -> (NSRange, String)? {
         let contents = file.stringView
         let declaration = contents.substring(with: violationRange)
-        let originalRange = NSRange(location: 0, length: declaration.count)
-        var substitutionResult = declaration
-        guard
-            let typeRange = regex(pattern).firstMatch(in: declaration, options: [], range: originalRange)?.range(at: 1)
-            else {
-                return (violationRange, substitutionResult)
-        }
-
-        let containerType = declaration.bridge().substring(with: typeRange)
-
-        switch containerType {
-        case "Optional":
-            let genericType = declaration.bridge().substring(from: typeRange.upperBound)
-                .replacingOccurrences(of: " ", with: "")
-                .replacingOccurrences(of: "<", with: "")
-                .replacingOccurrences(of: ">", with: "")
-            substitutionResult = "\(genericType)?"
-        case "ImplicitlyUnwrappedOptional":
-            let genericType = declaration.bridge().substring(from: typeRange.upperBound)
-                .replacingOccurrences(of: " ", with: "")
-                .replacingOccurrences(of: "<", with: "")
-                .replacingOccurrences(of: ">", with: "")
-            substitutionResult = "\(genericType)!"
-        case "Array":
-            substitutionResult = declaration.bridge().substring(from: typeRange.upperBound)
-                .replacingOccurrences(of: "<", with: "[")
-                .replacingOccurrences(of: ">", with: "]")
-        case "Dictionary":
-            substitutionResult = declaration.bridge().substring(from: typeRange.upperBound)
-                .replacingOccurrences(of: "<", with: "[")
-                .replacingOccurrences(of: ">", with: "]")
-                .replacingOccurrences(of: ",", with: ":")
-        default:
-            break
-        }
-
+        let substitutionResult = substitute(declaration)
         return (violationRange, substitutionResult)
+    }
+
+    private func substitute(_ declaration: String) -> String {
+        let originalRange = NSRange(location: 0, length: declaration.count)
+        guard let match = regex(pattern).firstMatch(in: declaration, options: [], range: originalRange) else {
+            return declaration
+        }
+
+        let typeRange = match.range(at: 1)
+        let openBracketRange = match.range(at: 2)
+        let closedBracketRange = match.range(at: 3)
+
+        // replace found type
+        let substitutionResult: String
+        let containerType = declaration.bridge().substring(with: typeRange)
+        let prefix = declaration.bridge().substring(to: typeRange.lowerBound)
+        switch containerType {
+        case "Optional", "Swift.Optional":
+            let genericType = declaration.bridge()
+                .replacingCharacters(in: closedBracketRange, with: "").bridge()
+                .replacingCharacters(in: openBracketRange, with: "")
+                .substring(from: typeRange.upperBound)
+            substitutionResult = "\(prefix)\(genericType)?"
+
+        case "ImplicitlyUnwrappedOptional", "Swift.ImplicitlyUnwrappedOptional":
+            let genericType = declaration.bridge()
+                .replacingCharacters(in: closedBracketRange, with: "").bridge()
+                .replacingCharacters(in: openBracketRange, with: "")
+                .substring(from: typeRange.upperBound)
+
+            substitutionResult = "\(prefix)\(genericType)!"
+        case "Array", "Swift.Array":
+            let genericType = declaration.bridge()
+                .replacingCharacters(in: closedBracketRange, with: "]").bridge()
+                .replacingCharacters(in: openBracketRange, with: "[")
+                .substring(from: typeRange.upperBound)
+
+            substitutionResult = "\(prefix)\(genericType)"
+        case "Dictionary", "Swift.Dictionary":
+            let genericType = declaration.bridge()
+                .replacingCharacters(in: closedBracketRange, with: "]").bridge()
+                .replacingCharacters(in: openBracketRange, with: "[")
+                .replacingOccurrences(of: ",", with: ":")
+                .substring(from: typeRange.upperBound)
+
+            substitutionResult = "\(prefix)\(genericType)"
+        default:
+            substitutionResult = declaration
+        }
+
+        let finalResult = substitute(substitutionResult)
+        return finalResult
     }
 
     private func violationResults(in file: SwiftLintFile) -> [NSTextCheckingResult] {
@@ -176,16 +224,16 @@ public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProv
         let sugaredType: String
 
         switch originalType {
-        case "Optional":
+        case "Optional", "Swift.Optional":
             typeString = "Optional<Int>"
             sugaredType = "Int?"
-        case "ImplicitlyUnwrappedOptional":
+        case "ImplicitlyUnwrappedOptional", "Swift.ImplicitlyUnwrappedOptional":
             typeString = "ImplicitlyUnwrappedOptional<Int>"
             sugaredType = "Int!"
-        case "Array":
+        case "Array", "Swift.Array":
             typeString = "Array<Int>"
             sugaredType = "[Int]"
-        case "Dictionary":
+        case "Dictionary", "Swift.Dictionary":
             typeString = "Dictionary<String, Int>"
             sugaredType = "[String: Int]"
         default:
