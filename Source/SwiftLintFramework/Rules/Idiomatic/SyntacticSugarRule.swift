@@ -15,31 +15,6 @@ public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProv
 
     private let types = ["Optional", "ImplicitlyUnwrappedOptional", "Array", "Dictionary"]
 
-    private var pattern: String {
-        let negativeLookBehind = "(?:(?<!\\.))"
-        return negativeLookBehind + "\\b(" + types.joined(separator: "|") + ")\\s*"
-        // Open generic
-        + "(<\\s*)"
-
-        // Everything but new generic
-        + "[^<>]*?"//  <> ////
-
-        // Optional inner generic
-        + "(?:<[^<>]*?>)?"
-
-        // Everything but new generic
-        + "[^<>]*?"
-
-        // 2nd Optional inner generic (as value type in dictionary)
-        + "(?:<[^<>]*?>)?"
-
-        // Everything but new generic
-        + "[^<>]*?"
-
-        // Closed generic
-        + "(\\s*>)"
-    }
-
     public init() {}
 
     public static let description = RuleDescription(
@@ -71,13 +46,15 @@ public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProv
 //            Example("let x: Foo.Optional<String>")
         ],
         triggeringExamples: [
-//            Example("let x: ↓Array<String>"),
-//            Example("let x: ↓Dictionary<Int, String>"),
-//            Example("let x: ↓Optional<Int>"),
-//            Example("let x: ↓ImplicitlyUnwrappedOptional<Int>"),
-//            Example("let x: ↓Swift.Array<String>"),
-//
+            Example("let x: ↓Array<String>"),
+            Example("let x: ↓Dictionary<Int, String>"),
+            Example("let x: ↓Optional<Int>"),
+            Example("let x: ↓ImplicitlyUnwrappedOptional<Int>"),
+            Example("let x: ↓Swift.Array<String>"),
+
             Example("func x(a: ↓Array<Int>, b: Int) -> [Int: Any]"),
+            Example("func x(a: ↓Swift.Array<Int>, b: Int) -> [Int: Any]"),
+
 //            Example("func x(a: [Int], b: Int) -> ↓Dictionary<Int, String>"),
 //            Example("func x(a: ↓Array<Int>, b: Int) -> ↓Dictionary<Int, String>"),
 //            Example("let x = ↓Array<String>.array(of: object)"),
@@ -116,163 +93,30 @@ public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProv
             warnSyntaxParserFailureOnce()
             return []
         }
-        let visitor = ForceCastRuleVisitor()
+        let visitor = SyntacticSugarRuleVisitor()
         visitor.walk(tree)
         return visitor.positions.map { position in
             StyleViolation(ruleDescription: Self.description,
                            severity: configuration.severity,
                            location: Location(file: file, byteOffset: ByteCount(position.utf8Offset)))
         }
-
-//
-//        let contents = file.stringView
-//        return violationResults(in: file).map {
-//            let typeString = contents.substring(with: $0.range(at: 1))
-//            return StyleViolation(ruleDescription: Self.description,
-//                                  severity: configuration.severity,
-//                                  location: Location(file: file, characterOffset: $0.range.location),
-//                                  reason: message(for: typeString))
-//        }
     }
 
     public func violationRanges(in file: SwiftLintFile) -> [NSRange] {
-        return violationResults(in: file).map { $0.range }
-    }
-
-    public func substitution(for violationRange: NSRange, in file: SwiftLintFile) -> (NSRange, String)? {
-        let contents = file.stringView
-        let declaration = contents.substring(with: violationRange)
-        let substitutionResult = substitute(declaration)
-        return (violationRange, substitutionResult)
-    }
-
-    private func substitute(_ declaration: String) -> String {
-        let originalRange = NSRange(location: 0, length: declaration.count)
-        guard let match = regex(pattern).firstMatch(in: declaration, options: [], range: originalRange) else {
-            return declaration
-        }
-
-        let typeRange = match.range(at: 1)
-        let openBracketRange = match.range(at: 2)
-        let closedBracketRange = match.range(at: 3)
-
-        // replace found type
-        let substitutionResult: String
-        let containerType = declaration.bridge().substring(with: typeRange)
-        let prefix = declaration.bridge().substring(to: typeRange.lowerBound)
-        switch containerType {
-        case "Optional", "Swift.Optional":
-            let genericType = declaration.bridge()
-                .replacingCharacters(in: closedBracketRange, with: "").bridge()
-                .replacingCharacters(in: openBracketRange, with: "")
-                .substring(from: typeRange.upperBound)
-            substitutionResult = "\(prefix)\(genericType)?"
-
-        case "ImplicitlyUnwrappedOptional", "Swift.ImplicitlyUnwrappedOptional":
-            let genericType = declaration.bridge()
-                .replacingCharacters(in: closedBracketRange, with: "").bridge()
-                .replacingCharacters(in: openBracketRange, with: "")
-                .substring(from: typeRange.upperBound)
-
-            substitutionResult = "\(prefix)\(genericType)!"
-        case "Array", "Swift.Array":
-            let genericType = declaration.bridge()
-                .replacingCharacters(in: closedBracketRange, with: "]").bridge()
-                .replacingCharacters(in: openBracketRange, with: "[")
-                .substring(from: typeRange.upperBound)
-
-            substitutionResult = "\(prefix)\(genericType)"
-        case "Dictionary", "Swift.Dictionary":
-            let genericType = declaration.bridge()
-                .replacingCharacters(in: closedBracketRange, with: "]").bridge()
-                .replacingCharacters(in: openBracketRange, with: "[")
-                .replacingOccurrences(of: ",", with: ":")
-                .substring(from: typeRange.upperBound)
-
-            substitutionResult = "\(prefix)\(genericType)"
-        default:
-            substitutionResult = declaration
-        }
-
-        let finalResult = substitute(substitutionResult)
-        return finalResult
-    }
-
-    private func violationResults(in file: SwiftLintFile) -> [NSTextCheckingResult] {
-        let excludingKinds = SyntaxKind.commentAndStringKinds
-        let contents = file.stringView
-        return regex(pattern).matches(in: contents).compactMap { result in
-            let range = result.range
-            guard let byteRange = contents.NSRangeToByteRange(start: range.location, length: range.length) else {
-                return nil
-            }
-
-            let kinds = file.syntaxMap.kinds(inByteRange: byteRange)
-            guard excludingKinds.isDisjoint(with: kinds),
-                isValidViolation(range: range, file: file) else {
-                    return nil
-            }
-
-            return result
-        }
+        return []
     }
 
     private func isValidViolation(range: NSRange, file: SwiftLintFile) -> Bool {
-        let contents = file.stringView
-
-        // avoid triggering when referring to an associatedtype
-        let start = range.location + range.length
-        let restOfFileRange = NSRange(location: start, length: contents.nsString.length - start)
-        if regex("\\s*\\.").firstMatch(in: file.contents, options: [],
-                                       range: restOfFileRange)?.range.location == start {
-            guard let byteOffset = contents.NSRangeToByteRange(start: range.location,
-                                                               length: range.length)?.location else {
-                return false
-            }
-
-            let kinds = file.structureDictionary.structures(forByteOffset: byteOffset).compactMap { $0.expressionKind }
-            guard kinds.contains(.call) else {
-                return false
-            }
-
-            if let (range, kinds) = file.match(pattern: "\\s*\\.(?:self|Type)", range: restOfFileRange).first,
-                range.location == start, kinds == [.keyword] || kinds == [.identifier] {
-                return false
-            }
-        }
-
         return true
     }
-
-    private func message(for originalType: String) -> String {
-        let typeString: String
-        let sugaredType: String
-
-        switch originalType {
-        case "Optional", "Swift.Optional":
-            typeString = "Optional<Int>"
-            sugaredType = "Int?"
-        case "ImplicitlyUnwrappedOptional", "Swift.ImplicitlyUnwrappedOptional":
-            typeString = "ImplicitlyUnwrappedOptional<Int>"
-            sugaredType = "Int!"
-        case "Array", "Swift.Array":
-            typeString = "Array<Int>"
-            sugaredType = "[Int]"
-        case "Dictionary", "Swift.Dictionary":
-            typeString = "Dictionary<String, Int>"
-            sugaredType = "[String: Int]"
-        default:
-            return Self.description.description
-        }
-
-        return "Shorthand syntactic sugar should be used, i.e. \(sugaredType) instead of \(typeString)."
+    
+    public func substitution(for violationRange: NSRange, in file: SwiftLintFile) -> (NSRange, String)? {
+        return nil
     }
-    
-    
-    
+
 }
 
-private final class ForceCastRuleVisitor: SyntaxAnyVisitor {
+private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
     
     private let types = ["Swift.Optional", "Swift.ImplicitlyUnwrappedOptional", "Swift.Array", "Swift.Dictionary",
                                              "Optional", "ImplicitlyUnwrappedOptional", "Array", "Dictionary"]
@@ -283,47 +127,39 @@ private final class ForceCastRuleVisitor: SyntaxAnyVisitor {
         
         // let x: ↓Swift.Optional<String>
         // let x: ↓Optional<String>
-        guard let argument = genericArgument(node) else {
-            return
+        if let type = isValidTypeSyntax(node.type) {
+            positions.append(type.positionAfterSkippingLeadingTrivia)
         }
-//        guard let genericArgument = node.type.genericArgumentClause else {
-//            return
-//        }
-        
-        positions.append(argument.0.positionAfterSkippingLeadingTrivia)
     }
     
     override func visitPost(_ node: FunctionParameterSyntax) {
-        
+
         // func x(a: ↓Array<Int>, b: Int) -> [Int: Any]
-        if let simpleType = node.type?.as(SimpleTypeIdentifierSyntax.self) {
-            guard types.contains(simpleType.name.text) else { return }
-            guard let generic = simpleType.genericArgumentClause else { return }
-            positions.append(simpleType.positionAfterSkippingLeadingTrivia)
+        if let type = isValidTypeSyntax(node.type) {
+            positions.append(type.positionAfterSkippingLeadingTrivia)
         }
     }
     
-    private func genericArgument(_ node: TypeAnnotationSyntax) -> (SyntaxProtocol, GenericArgumentClauseSyntax)? {
-        if let simpleType = node.type.as(SimpleTypeIdentifierSyntax.self) {
+    private func isValidTypeSyntax(_ typeSyntax: TypeSyntax?) -> TypeSyntaxProtocol? {
+        if let simpleType = typeSyntax?.as(SimpleTypeIdentifierSyntax.self) {
             guard types.contains(simpleType.name.text) else { return nil }
-            guard let generic = simpleType.genericArgumentClause else { return nil }
-            return (simpleType, generic)
+            guard simpleType.genericArgumentClause != nil else { return nil }
+            return simpleType
         }
         
-        // Base class is "Swift"
-        if let memberType = node.type.as(MemberTypeIdentifierSyntax.self),
+        // Base class is "Swift" for cases like "Swift.Array"
+        if let memberType = typeSyntax?.as(MemberTypeIdentifierSyntax.self),
            let baseType = memberType.baseType.as(SimpleTypeIdentifierSyntax.self),
            baseType.name.text == "Swift" {
             
             guard types.contains(memberType.name.text) else { return nil }
             
-            guard let generic = memberType.genericArgumentClause else { return nil }
-            return (memberType, generic)
+            guard memberType.genericArgumentClause != nil else { return nil }
+            return memberType
         }
-        
         return nil
     }
-    
+        
     var level: Int = 0
     
     override func visitAny(_ node: Syntax) -> SyntaxVisitorContinueKind {
