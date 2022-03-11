@@ -41,6 +41,9 @@ public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProv
             Example("func x(a: [Int], b: Int) -> Array<Int>.Index"),
             Example("unsafeBitCast(nonOptionalT, to: Optional<T>.self)"),
             Example("unsafeBitCast(someType, to: Swift.Array<T>.self)"),
+            Example("let a = Swift.Optional<String?>.none"),
+            Example("let x = Array<String>.array(of: object)"),
+            Example("let x = Swift.Array<String>.array(of: object)"),
 
             Example("type is Optional<String>.Type"),
             Example("let x: Foo.Optional<String>")
@@ -56,8 +59,6 @@ public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProv
             Example("func x(a: ↓Swift.Array<Int>, b: Int) -> [Int: Any]"),
 
             Example("func x(a: [Int], b: Int) -> ↓Dictionary<Int, String>"),
-            Example("let x = ↓Array<String>.array(of: object)"),
-            Example("let x = ↓Swift.Array<String>.array(of: object)"),
             Example("let x = y as? ↓Array<[String: Any]>"),
             Example("let x = Box<Array<T>>()"),
             Example("func x() -> Box<↓Array<T>>"),
@@ -206,11 +207,9 @@ private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
         }
 
         if types.contains(tokensText) {
-            // Skip case when '.self' is used Optional<T>.self)
-            if let parent = node.parent?.as(MemberAccessExprSyntax.self) {
-                if parent.name.text == "self" {
-                    return
-                }
+            // Skip cases when method is called. like Optional<T>.none, Optional<T>.self
+            if node.parent?.as(MemberAccessExprSyntax.self) != nil {
+                return
             }
 
             violations.append(SyntacticSugarRuleViolation(
