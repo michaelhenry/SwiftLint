@@ -62,7 +62,8 @@ public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProv
             Example("let x = ↓Swift.Array<String>.array(of: object)"),
             Example("let x = y as? ↓Array<[String: Any]>"),
             Example("let x = Box<Array<T>>()"),
-            Example("func x() -> Box<↓Array<T>>")
+            Example("func x() -> Box<↓Array<T>>"),
+            Example("func x() -> ↓Dictionary<String, Any>?")
         ],
         corrections: [:
 //            Example("let x: Array<String>"): Example("let x: [String]"),
@@ -152,29 +153,29 @@ private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
     override func visitPost(_ node: TypeAnnotationSyntax) {
         // let x: ↓Swift.Optional<String>
         // let x: ↓Optional<String>
-        if let type = isValidTypeSyntax(node.type) {
-            violations.append(type)
+        if let violation = violation(in: node.type) {
+            violations.append(violation)
         }
     }
 
     override func visitPost(_ node: FunctionParameterSyntax) {
         // func x(a: ↓Array<Int>, b: Int) -> [Int: Any]
-        if let type = isValidTypeSyntax(node.type) {
-            violations.append(type)
+        if let violation = violation(in: node.type) {
+            violations.append(violation)
         }
     }
 
     override func visitPost(_ node: ReturnClauseSyntax) {
         // func x(a: [Int], b: Int) -> ↓Dictionary<Int, String>
-        if let type = isValidTypeSyntax(node.returnType) {
-            violations.append(type)
+        if let violation = violation(in: node.returnType) {
+            violations.append(violation)
         }
     }
 
     override func visitPost(_ node: AsExprSyntax) {
         // json["recommendations"] as? ↓Array<[String: Any]>
-        if let type = isValidTypeSyntax(node.typeName) {
-            violations.append(type)
+        if let violation = violation(in: node.typeName) {
+            violations.append(violation)
         }
     }
 
@@ -205,12 +206,16 @@ private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
 
         // If there's no type let's check all inner generics like in case of Box<Array<T>>
         node.genericArgumentClause.arguments
-            .compactMap { isValidTypeSyntax($0.argumentType) }
+            .compactMap { violation(in: $0.argumentType) }
             .first
             .map { violations.append($0) }
     }
 
-    private func isValidTypeSyntax(_ typeSyntax: TypeSyntax?) -> SyntacticSugarRuleViolation? {
+    private func violation(in typeSyntax: TypeSyntax?) -> SyntacticSugarRuleViolation? {
+        if let optionalType = typeSyntax?.as(OptionalTypeSyntax.self) {
+            return violation(in: optionalType.wrappedType)
+        }
+
         if let simpleType = typeSyntax?.as(SimpleTypeIdentifierSyntax.self) {
             if types.contains(simpleType.name.text) {
                 guard simpleType.genericArgumentClause != nil else { return nil }
@@ -220,7 +225,7 @@ private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
 
             // If there's no type let's check all inner generics like in case of Box<Array<T>>
             guard let genericArguments = simpleType.genericArgumentClause else { return nil }
-            let innerTypes = genericArguments.arguments.compactMap { isValidTypeSyntax($0.argumentType) }
+            let innerTypes = genericArguments.arguments.compactMap { violation(in: $0.argumentType) }
             return innerTypes.first
         }
 
