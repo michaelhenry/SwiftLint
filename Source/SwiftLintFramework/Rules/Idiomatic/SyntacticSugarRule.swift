@@ -61,6 +61,7 @@ public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProv
             Example("let x = ↓Array<String>.array(of: object)"),
             Example("let x = ↓Swift.Array<String>.array(of: object)"),
             Example("let x = y as? ↓Array<[String: Any]>"),
+            Example("let x = Box<Array<T>>()"),
             Example("func x() -> Box<↓Array<T>>")
         ],
         corrections: [:
@@ -188,18 +189,25 @@ private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
             tokensText.removeFirst("Swift.".count)
         }
 
-        guard types.contains(tokensText) else { return }
-
-        // Skip case when '.self' is used Optional<T>.self)
-        if let parent = node.parent?.as(MemberAccessExprSyntax.self) {
-            if parent.name.text == "self" {
-                return
+        if types.contains(tokensText) {
+            // Skip case when '.self' is used Optional<T>.self)
+            if let parent = node.parent?.as(MemberAccessExprSyntax.self) {
+                if parent.name.text == "self" {
+                    return
+                }
             }
+
+            violations.append(SyntacticSugarRuleViolation(
+                position: firstToken.positionAfterSkippingLeadingTrivia,
+                type: tokensText))
+            return
         }
 
-        violations.append(SyntacticSugarRuleViolation(
-            position: firstToken.positionAfterSkippingLeadingTrivia,
-            type: tokensText))
+        // If there's no type let's check all inner generics like in case of Box<Array<T>>
+        node.genericArgumentClause.arguments
+            .compactMap { isValidTypeSyntax($0.argumentType) }
+            .first
+            .map { violations.append($0) }
     }
 
     private func isValidTypeSyntax(_ typeSyntax: TypeSyntax?) -> SyntacticSugarRuleViolation? {
