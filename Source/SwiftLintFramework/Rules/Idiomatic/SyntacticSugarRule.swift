@@ -23,47 +23,49 @@ public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProv
         description: "Shorthand syntactic sugar should be used, i.e. [Int] instead of Array<Int>.",
         kind: .idiomatic,
         nonTriggeringExamples: [
-            Example("let x: [Int]"),
-            Example("let x: [Int: String]"),
-            Example("let x: Int?"),
-            Example("func x(a: [Int], b: Int) -> [Int: Any]"),
-            Example("let x: Int!"),
-            Example("""
-            extension Array {
-              func x() { }
-            }
-            """),
-            Example("""
-            extension Dictionary {
-              func x() { }
-            }
-            """),
-            Example("let x: CustomArray<String>"),
-            Example("var currentIndex: Array<OnboardingPage>.Index?"),
-            Example("func x(a: [Int], b: Int) -> Array<Int>.Index"),
-            Example("unsafeBitCast(nonOptionalT, to: Optional<T>.self)"),
-            Example("unsafeBitCast(someType, to: Swift.Array<T>.self)"),
-
-            Example("type is Optional<String>.Type"),
-            Example("let x: Foo.Optional<String>")
+//            Example("let x: [Int]"),
+//            Example("let x: [Int: String]"),
+//            Example("let x: Int?"),
+//            Example("func x(a: [Int], b: Int) -> [Int: Any]"),
+//            Example("let x: Int!"),
+//            Example("""
+//            extension Array {
+//              func x() { }
+//            }
+//            """),
+//            Example("""
+//            extension Dictionary {
+//              func x() { }
+//            }
+//            """),
+//            Example("let x: CustomArray<String>"),
+//            Example("var currentIndex: Array<OnboardingPage>.Index?"),
+//            Example("func x(a: [Int], b: Int) -> Array<Int>.Index"),
+//            Example("unsafeBitCast(nonOptionalT, to: Optional<T>.self)"),
+//            Example("unsafeBitCast(someType, to: Swift.Array<T>.self)"),
+//
+//            Example("type is Optional<String>.Type"),
+//            Example("let x: Foo.Optional<String>")
         ],
         triggeringExamples: [
-            Example("let x: ↓Array<String>"),
-            Example("let x: ↓Dictionary<Int, String>"),
-            Example("let x: ↓Optional<Int>"),
-            Example("let x: ↓ImplicitlyUnwrappedOptional<Int>"),
-            Example("let x: ↓Swift.Array<String>"),
-
-            Example("func x(a: ↓Array<Int>, b: Int) -> [Int: Any]"),
-            Example("func x(a: ↓Swift.Array<Int>, b: Int) -> [Int: Any]"),
-
-            Example("func x(a: [Int], b: Int) -> ↓Dictionary<Int, String>"),
-            Example("let x = ↓Array<String>.array(of: object)"),
-            Example("let x = ↓Swift.Array<String>.array(of: object)"),
-            Example("let x = y as? ↓Array<[String: Any]>"),
-            Example("let x = Box<Array<T>>()"),
-            Example("func x() -> Box<↓Array<T>>"),
-            Example("func x() -> ↓Dictionary<String, Any>?")
+//            Example("let x: ↓Array<String>"),
+//            Example("let x: ↓Dictionary<Int, String>"),
+//            Example("let x: ↓Optional<Int>"),
+//            Example("let x: ↓ImplicitlyUnwrappedOptional<Int>"),
+//            Example("let x: ↓Swift.Array<String>"),
+//
+//            Example("func x(a: ↓Array<Int>, b: Int) -> [Int: Any]"),
+//            Example("func x(a: ↓Swift.Array<Int>, b: Int) -> [Int: Any]"),
+//
+//            Example("func x(a: [Int], b: Int) -> ↓Dictionary<Int, String>"),
+//            Example("let x = ↓Array<String>.array(of: object)"),
+//            Example("let x = ↓Swift.Array<String>.array(of: object)"),
+//            Example("let x = y as? ↓Array<[String: Any]>"),
+//            Example("let x = Box<Array<T>>()"),
+//            Example("func x() -> Box<↓Array<T>>"),
+//            Example("func x() -> ↓Dictionary<String, Any>?"),
+            
+            Example("typealias Document = ↓Dictionary<String, AnyBSON?>")
         ],
         corrections: [:
 //            Example("let x: Array<String>"): Example("let x: [String]"),
@@ -178,6 +180,13 @@ private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
             violations.append(violation)
         }
     }
+    
+    override func visitPost(_ node: TypeInitializerClauseSyntax) {
+        // typealias Document = ↓Dictionary<String, AnyBSON?>
+        if let violation = violation(in: node.value) {
+            violations.append(violation)
+        }
+    }
 
     override func visitPost(_ node: SpecializeExprSyntax) {
         // let x = ↓Array<String>.array(of: object)
@@ -245,7 +254,7 @@ private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
     var level: Int = 0
 
     override func visitAny(_ node: Syntax) -> SyntaxVisitorContinueKind {
-//        print("\(levelS) --> \(node.syntaxNodeType) : \(node)")
+        print("\(levelS) --> \(node.syntaxNodeType) : \(node)")
         level += 1
         return super.visitAny(node)
     }
@@ -255,6 +264,6 @@ private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
     }
     override func visitAnyPost(_ node: Syntax) {
         level -= 1
-//        print("\(levelS) <-- \(node.syntaxNodeType) : \(node)")
+        print("\(levelS) <-- \(node.syntaxNodeType) : \(node)")
     }
 }
