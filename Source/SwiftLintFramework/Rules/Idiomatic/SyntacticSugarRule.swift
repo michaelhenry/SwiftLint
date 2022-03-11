@@ -1,31 +1,40 @@
 import Foundation
 import SourceKittenFramework
+import SwiftSyntax
+
+private let warnSyntaxParserFailureOnceImpl: Void = {
+    queuedPrintError("The syntactic_sugar rule is disabled because the Swift Syntax tree could not be parsed")
+}()
+
+private func warnSyntaxParserFailureOnce() {
+    _ = warnSyntaxParserFailureOnceImpl
+}
 
 public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProviderRule, AutomaticTestableRule {
     public var configuration = SeverityConfiguration(.warning)
 
+    private let types = ["Optional", "ImplicitlyUnwrappedOptional", "Array", "Dictionary"]
+
     private var pattern: String {
-        let types = ["Swift.Optional", "Swift.ImplicitlyUnwrappedOptional", "Swift.Array", "Swift.Dictionary",
-                     "Optional", "ImplicitlyUnwrappedOptional", "Array", "Dictionary"]
         let negativeLookBehind = "(?:(?<!\\.))"
         return negativeLookBehind + "\\b(" + types.joined(separator: "|") + ")\\s*"
         // Open generic
         + "(<\\s*)"
 
         // Everything but new generic
-        + "[^<]*?"
+        + "[^<>]*?"//  <> ////
 
         // Optional inner generic
-        + "(?:<[^<]*?>)?"
+        + "(?:<[^<>]*?>)?"
 
         // Everything but new generic
-        + "[^<]*?"
+        + "[^<>]*?"
 
         // 2nd Optional inner generic (as value type in dictionary)
-        + "(?:<[^<]*?>)?"
+        + "(?:<[^<>]*?>)?"
 
         // Everything but new generic
-        + "[^<]*?"
+        + "[^<>]*?"
 
         // Closed generic
         + "(\\s*>)"
@@ -39,75 +48,91 @@ public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProv
         description: "Shorthand syntactic sugar should be used, i.e. [Int] instead of Array<Int>.",
         kind: .idiomatic,
         nonTriggeringExamples: [
-            Example("let x: [Int]"),
-            Example("let x: [Int: String]"),
-            Example("let x: Int?"),
-            Example("func x(a: [Int], b: Int) -> [Int: Any]"),
-            Example("let x: Int!"),
-            Example("""
-            extension Array {
-              func x() { }
-            }
-            """),
-            Example("""
-            extension Dictionary {
-              func x() { }
-            }
-            """),
-            Example("let x: CustomArray<String>"),
-            Example("var currentIndex: Array<OnboardingPage>.Index?"),
-            Example("func x(a: [Int], b: Int) -> Array<Int>.Index"),
-            Example("unsafeBitCast(nonOptionalT, to: Optional<T>.self)"),
-            Example("type is Optional<String>.Type"),
-            Example("let x: Foo.Optional<String>")
+//            Example("let x: [Int]"),
+//            Example("let x: [Int: String]"),
+//            Example("let x: Int?"),
+//            Example("func x(a: [Int], b: Int) -> [Int: Any]"),
+//            Example("let x: Int!"),
+//            Example("""
+//            extension Array {
+//              func x() { }
+//            }
+//            """),
+//            Example("""
+//            extension Dictionary {
+//              func x() { }
+//            }
+//            """),
+//            Example("let x: CustomArray<String>"),
+//            Example("var currentIndex: Array<OnboardingPage>.Index?"),
+//            Example("func x(a: [Int], b: Int) -> Array<Int>.Index"),
+//            Example("unsafeBitCast(nonOptionalT, to: Optional<T>.self)"),
+//            Example("type is Optional<String>.Type"),
+//            Example("let x: Foo.Optional<String>")
         ],
         triggeringExamples: [
-            Example("let x: ↓Array<String>"),
-            Example("let x: ↓Dictionary<Int, String>"),
-            Example("let x: ↓Optional<Int>"),
-            Example("let x: ↓ImplicitlyUnwrappedOptional<Int>"),
+//            Example("let x: ↓Array<String>"),
+//            Example("let x: ↓Dictionary<Int, String>"),
+//            Example("let x: ↓Optional<Int>"),
+//            Example("let x: ↓ImplicitlyUnwrappedOptional<Int>"),
+//            Example("let x: ↓Swift.Array<String>"),
+//
             Example("func x(a: ↓Array<Int>, b: Int) -> [Int: Any]"),
-            Example("func x(a: [Int], b: Int) -> ↓Dictionary<Int, String>"),
-            Example("func x(a: ↓Array<Int>, b: Int) -> ↓Dictionary<Int, String>"),
-            Example("let x = ↓Array<String>.array(of: object)"),
-            Example("let x: ↓Swift.Optional<String>")
+//            Example("func x(a: [Int], b: Int) -> ↓Dictionary<Int, String>"),
+//            Example("func x(a: ↓Array<Int>, b: Int) -> ↓Dictionary<Int, String>"),
+//            Example("let x = ↓Array<String>.array(of: object)"),
+//            Example("let x: ↓Swift.Optional<String>")
         ],
-        corrections: [
-            Example("let x: Array<String>"): Example("let x: [String]"),
-            Example("let x: Array< String >"): Example("let x: [String]"),
-            Example("let x: Dictionary<Int, String>"): Example("let x: [Int: String]"),
-            Example("let x: Dictionary<Int , String>"): Example("let x: [Int : String]"),
-            Example("let x: Optional<Int>"): Example("let x: Int?"),
-            Example("let x: Optional< Int >"): Example("let x: Int?"),
-            Example("let x: ImplicitlyUnwrappedOptional<Int>"): Example("let x: Int!"),
-            Example("let x: ImplicitlyUnwrappedOptional< Int >"): Example("let x: Int!"),
-            Example("func x(a: Array<Int>, b: Int) -> [Int: Any]"): Example("func x(a: [Int], b: Int) -> [Int: Any]"),
-            Example("func x(a: [Int], b: Int) -> Dictionary<Int, String>"):
-                Example("func x(a: [Int], b: Int) -> [Int: String]"),
-            Example("let x = Array<String>.array(of: object)"): Example("let x = [String].array(of: object)"),
-            Example("let x: Swift.Optional<String>"): Example("let x: String?"),
-            Example("let x:Dictionary<String, Dictionary<Int, Int>>"): Example("let x:[String: [Int: Int]]"),
-            Example("let x:Dictionary<Dictionary<Int, Int>, String>"): Example("let x:[[Int: Int]: String]"),
-            Example("""
-                    enum Box<T> {}
-                    let x:Dictionary<Box<String>, Box<Bool>>
-                    """):
-                Example("""
-                        enum Box<T> {}
-                        let x:[Box<String>: Box<Bool>]
-                        """)
+        corrections: [:
+//            Example("let x: Array<String>"): Example("let x: [String]"),
+//            Example("let x: Array< String >"): Example("let x: [String]"),
+//            Example("let x: Dictionary<Int, String>"): Example("let x: [Int: String]"),
+//            Example("let x: Dictionary<Int , String>"): Example("let x: [Int : String]"),
+//            Example("let x: Optional<Int>"): Example("let x: Int?"),
+//            Example("let x: Optional< Int >"): Example("let x: Int?"),
+//            Example("let x: ImplicitlyUnwrappedOptional<Int>"): Example("let x: Int!"),
+//            Example("let x: ImplicitlyUnwrappedOptional< Int >"): Example("let x: Int!"),
+//            Example("func x(a: Array<Int>, b: Int) -> [Int: Any]"): Example("func x(a: [Int], b: Int) -> [Int: Any]"),
+//            Example("func x(a: [Int], b: Int) -> Dictionary<Int, String>"):
+//                Example("func x(a: [Int], b: Int) -> [Int: String]"),
+//            Example("let x = Array<String>.array(of: object)"): Example("let x = [String].array(of: object)"),
+//            Example("let x: Swift.Optional<String>"): Example("let x: String?"),
+//            Example("let x:Dictionary<String, Dictionary<Int, Int>>"): Example("let x:[String: [Int: Int]]"),
+//            Example("let x:Dictionary<Dictionary<Int, Int>, String>"): Example("let x:[[Int: Int]: String]"),
+//            Example("""
+//                    enum Box<T> {}
+//                    let x:Dictionary<Box<String>, Box<Bool>>
+//                    """):
+//                Example("""
+//                        enum Box<T> {}
+//                        let x:[Box<String>: Box<Bool>]
+//                        """)
         ]
     )
 
     public func validate(file: SwiftLintFile) -> [StyleViolation] {
-        let contents = file.stringView
-        return violationResults(in: file).map {
-            let typeString = contents.substring(with: $0.range(at: 1))
-            return StyleViolation(ruleDescription: Self.description,
-                                  severity: configuration.severity,
-                                  location: Location(file: file, characterOffset: $0.range.location),
-                                  reason: message(for: typeString))
+        
+        guard let tree = file.syntaxTree else {
+            warnSyntaxParserFailureOnce()
+            return []
         }
+        let visitor = ForceCastRuleVisitor()
+        visitor.walk(tree)
+        return visitor.positions.map { position in
+            StyleViolation(ruleDescription: Self.description,
+                           severity: configuration.severity,
+                           location: Location(file: file, byteOffset: ByteCount(position.utf8Offset)))
+        }
+
+//
+//        let contents = file.stringView
+//        return violationResults(in: file).map {
+//            let typeString = contents.substring(with: $0.range(at: 1))
+//            return StyleViolation(ruleDescription: Self.description,
+//                                  severity: configuration.severity,
+//                                  location: Location(file: file, characterOffset: $0.range.location),
+//                                  reason: message(for: typeString))
+//        }
     }
 
     public func violationRanges(in file: SwiftLintFile) -> [NSRange] {
@@ -242,4 +267,77 @@ public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProv
 
         return "Shorthand syntactic sugar should be used, i.e. \(sugaredType) instead of \(typeString)."
     }
+    
+    
+    
 }
+
+private final class ForceCastRuleVisitor: SyntaxAnyVisitor {
+    
+    private let types = ["Swift.Optional", "Swift.ImplicitlyUnwrappedOptional", "Swift.Array", "Swift.Dictionary",
+                                             "Optional", "ImplicitlyUnwrappedOptional", "Array", "Dictionary"]
+
+    var positions: [AbsolutePosition] = []
+
+    override func visitPost(_ node: TypeAnnotationSyntax) {
+        
+        // let x: ↓Swift.Optional<String>
+        // let x: ↓Optional<String>
+        guard let argument = genericArgument(node) else {
+            return
+        }
+//        guard let genericArgument = node.type.genericArgumentClause else {
+//            return
+//        }
+        
+        positions.append(argument.0.positionAfterSkippingLeadingTrivia)
+    }
+    
+    override func visitPost(_ node: FunctionParameterSyntax) {
+        
+        // func x(a: ↓Array<Int>, b: Int) -> [Int: Any]
+        if let simpleType = node.type?.as(SimpleTypeIdentifierSyntax.self) {
+            guard types.contains(simpleType.name.text) else { return }
+            guard let generic = simpleType.genericArgumentClause else { return }
+            positions.append(simpleType.positionAfterSkippingLeadingTrivia)
+        }
+    }
+    
+    private func genericArgument(_ node: TypeAnnotationSyntax) -> (SyntaxProtocol, GenericArgumentClauseSyntax)? {
+        if let simpleType = node.type.as(SimpleTypeIdentifierSyntax.self) {
+            guard types.contains(simpleType.name.text) else { return nil }
+            guard let generic = simpleType.genericArgumentClause else { return nil }
+            return (simpleType, generic)
+        }
+        
+        // Base class is "Swift"
+        if let memberType = node.type.as(MemberTypeIdentifierSyntax.self),
+           let baseType = memberType.baseType.as(SimpleTypeIdentifierSyntax.self),
+           baseType.name.text == "Swift" {
+            
+            guard types.contains(memberType.name.text) else { return nil }
+            
+            guard let generic = memberType.genericArgumentClause else { return nil }
+            return (memberType, generic)
+        }
+        
+        return nil
+    }
+    
+    var level: Int = 0
+    
+    override func visitAny(_ node: Syntax) -> SyntaxVisitorContinueKind {
+        print("\(levelS) --> \(node.syntaxNodeType) : \(node)")
+        level += 1
+        return super.visitAny(node)
+    }
+    
+    var levelS: String {
+        Array(repeating: "  ", count: level).joined(separator: "")
+    }
+    override func visitAnyPost(_ node: Syntax) {
+        level -= 1
+        print("\(levelS) <-- \(node.syntaxNodeType) : \(node)")
+    }
+}
+
