@@ -97,10 +97,11 @@ public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProv
         }
         let visitor = SyntacticSugarRuleVisitor()
         visitor.walk(tree)
-        return visitor.positions.map { position in
-            StyleViolation(ruleDescription: Self.description,
-                           severity: configuration.severity,
-                           location: Location(file: file, byteOffset: ByteCount(position.utf8Offset)))
+        return visitor.violations.map { violation in
+            return StyleViolation(ruleDescription: Self.description,
+                                  severity: configuration.severity,
+                                  location: Location(file: file, byteOffset: ByteCount(violation.position.utf8Offset)),
+                                  reason: message(for: violation.type))
         }
     }
 
@@ -111,40 +112,68 @@ public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProv
     public func substitution(for violationRange: NSRange, in file: SwiftLintFile) -> (NSRange, String)? {
         return nil
     }
+
+    private func message(for originalType: String) -> String {
+        let typeString: String
+        let sugaredType: String
+
+        switch originalType {
+        case "Optional":
+            typeString = "Optional<Int>"
+            sugaredType = "Int?"
+        case "ImplicitlyUnwrappedOptional":
+            typeString = "ImplicitlyUnwrappedOptional<Int>"
+            sugaredType = "Int!"
+        case "Array":
+            typeString = "Array<Int>"
+            sugaredType = "[Int]"
+        case "Dictionary":
+            typeString = "Dictionary<String, Int>"
+            sugaredType = "[String: Int]"
+        default:
+            return Self.description.description
+        }
+
+        return "Shorthand syntactic sugar should be used, i.e. \(sugaredType) instead of \(typeString)."
+    }
+}
+
+private struct SyntacticSugarRuleViolation {
+    let position: AbsolutePosition
+    let type: String
 }
 
 private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
-    private let types = ["Swift.Optional", "Swift.ImplicitlyUnwrappedOptional", "Swift.Array", "Swift.Dictionary",
-                         "Optional", "ImplicitlyUnwrappedOptional", "Array", "Dictionary"]
+    private let types = ["Optional", "ImplicitlyUnwrappedOptional", "Array", "Dictionary"]
 
-    var positions: [AbsolutePosition] = []
+    var violations: [SyntacticSugarRuleViolation] = []
 
     override func visitPost(_ node: TypeAnnotationSyntax) {
         // let x: ↓Swift.Optional<String>
         // let x: ↓Optional<String>
         if let type = isValidTypeSyntax(node.type) {
-            positions.append(type.positionAfterSkippingLeadingTrivia)
+            violations.append(type)
         }
     }
 
     override func visitPost(_ node: FunctionParameterSyntax) {
         // func x(a: ↓Array<Int>, b: Int) -> [Int: Any]
         if let type = isValidTypeSyntax(node.type) {
-            positions.append(type.positionAfterSkippingLeadingTrivia)
+            violations.append(type)
         }
     }
 
     override func visitPost(_ node: ReturnClauseSyntax) {
         // func x(a: [Int], b: Int) -> ↓Dictionary<Int, String>
         if let type = isValidTypeSyntax(node.returnType) {
-            positions.append(type.positionAfterSkippingLeadingTrivia)
+            violations.append(type)
         }
     }
 
     override func visitPost(_ node: AsExprSyntax) {
         // json["recommendations"] as? ↓Array<[String: Any]>
         if let type = isValidTypeSyntax(node.typeName) {
-            positions.append(type.positionAfterSkippingLeadingTrivia)
+            violations.append(type)
         }
     }
 
@@ -154,7 +183,7 @@ private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
         guard let firstToken = tokens.first else { return }
 
         // Remove Swift. module prefix if needed
-        var tokensText = tokens.map { $0.text }.joined( )
+        var tokensText = tokens.map { $0.text }.joined()
         if tokensText.starts(with: "Swift.") {
             tokensText.removeFirst("Swift.".count)
         }
@@ -168,14 +197,17 @@ private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
             }
         }
 
-        positions.append(firstToken.positionAfterSkippingLeadingTrivia)
+        violations.append(SyntacticSugarRuleViolation(
+            position: firstToken.positionAfterSkippingLeadingTrivia,
+            type: tokensText))
     }
 
-    private func isValidTypeSyntax(_ typeSyntax: TypeSyntax?) -> TypeSyntaxProtocol? {
+    private func isValidTypeSyntax(_ typeSyntax: TypeSyntax?) -> SyntacticSugarRuleViolation? {
         if let simpleType = typeSyntax?.as(SimpleTypeIdentifierSyntax.self) {
             if types.contains(simpleType.name.text) {
                 guard simpleType.genericArgumentClause != nil else { return nil }
-                return simpleType
+                return SyntacticSugarRuleViolation(position: simpleType.positionAfterSkippingLeadingTrivia,
+                                                   type: simpleType.name.text)
             }
 
             // If there's no type let's check all inner generics like in case of Box<Array<T>>
@@ -191,7 +223,8 @@ private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
             guard types.contains(memberType.name.text) else { return nil }
 
             guard memberType.genericArgumentClause != nil else { return nil }
-            return memberType
+            return SyntacticSugarRuleViolation(position: memberType.positionAfterSkippingLeadingTrivia,
+                                               type: memberType.name.text)
         }
         return nil
     }
