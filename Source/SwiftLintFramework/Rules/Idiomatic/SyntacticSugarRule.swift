@@ -59,7 +59,9 @@ public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProv
 
             Example("func x(a: [Int], b: Int) -> ↓Dictionary<Int, String>"),
             Example("let x = ↓Array<String>.array(of: object)"),
-            Example("let x = ↓Swift.Array<String>.array(of: object)")
+            Example("let x = ↓Swift.Array<String>.array(of: object)"),
+            Example("let x = y as? ↓Array<[String: Any]>")
+
         ],
         corrections: [:
 //            Example("let x: Array<String>"): Example("let x: [String]"),
@@ -106,10 +108,6 @@ public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProv
         return []
     }
 
-    private func isValidViolation(range: NSRange, file: SwiftLintFile) -> Bool {
-        return true
-    }
-
     public func substitution(for violationRange: NSRange, in file: SwiftLintFile) -> (NSRange, String)? {
         return nil
     }
@@ -139,6 +137,13 @@ private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
     override func visitPost(_ node: ReturnClauseSyntax) {
         // func x(a: [Int], b: Int) -> ↓Dictionary<Int, String>
         if let type = isValidTypeSyntax(node.returnType) {
+            positions.append(type.positionAfterSkippingLeadingTrivia)
+        }
+    }
+
+    override func visitPost(_ node: AsExprSyntax) {
+        // json["recommendations"] as? ↓Array<[String: Any]>
+        if let type = isValidTypeSyntax(node.typeName) {
             positions.append(type.positionAfterSkippingLeadingTrivia)
         }
     }
