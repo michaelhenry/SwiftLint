@@ -60,8 +60,8 @@ public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProv
             Example("func x(a: [Int], b: Int) -> ↓Dictionary<Int, String>"),
             Example("let x = ↓Array<String>.array(of: object)"),
             Example("let x = ↓Swift.Array<String>.array(of: object)"),
-            Example("let x = y as? ↓Array<[String: Any]>")
-
+            Example("let x = y as? ↓Array<[String: Any]>"),
+            Example("func x() -> Box<↓Array<T>>")
         ],
         corrections: [:
 //            Example("let x: Array<String>"): Example("let x: [String]"),
@@ -173,9 +173,15 @@ private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
 
     private func isValidTypeSyntax(_ typeSyntax: TypeSyntax?) -> TypeSyntaxProtocol? {
         if let simpleType = typeSyntax?.as(SimpleTypeIdentifierSyntax.self) {
-            guard types.contains(simpleType.name.text) else { return nil }
-            guard simpleType.genericArgumentClause != nil else { return nil }
-            return simpleType
+            if types.contains(simpleType.name.text) {
+                guard simpleType.genericArgumentClause != nil else { return nil }
+                return simpleType
+            }
+
+            // If there's no type let's check all inner generics like in case of Box<Array<T>>
+            guard let genericArguments = simpleType.genericArgumentClause else { return nil }
+            let innerTypes = genericArguments.arguments.compactMap { isValidTypeSyntax($0.argumentType) }
+            return innerTypes.first
         }
 
         // Base class is "Swift" for cases like "Swift.Array"
