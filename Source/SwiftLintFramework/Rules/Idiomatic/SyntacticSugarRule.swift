@@ -70,12 +70,13 @@ public struct SyntacticSugarRule: CorrectableRule, ConfigurationProviderRule, Au
         corrections: [
             Example("let x: Array<String>"): Example("let x: [String]"),
             Example("let x: Array< String >"): Example("let x: [String]"),
-            Example("let x: Dictionary<Int, String>"): Example("let x: [Int: String]")
+            Example("let x: Dictionary<Int, String>"): Example("let x: [Int: String]"),
+            Example("let x: Optional<Int>"): Example("let x: Int?"),
+            Example("let x: Optional< Int >"): Example("let x: Int?"),
+            Example("let x: ImplicitlyUnwrappedOptional<Int>"): Example("let x: Int!"),
+            Example("let x: ImplicitlyUnwrappedOptional< Int >"): Example("let x: Int!")
+
 //            Example("let x: Dictionary<Int , String>"): Example("let x: [Int : String]"),
-//            Example("let x: Optional<Int>"): Example("let x: Int?"),
-//            Example("let x: Optional< Int >"): Example("let x: Int?"),
-//            Example("let x: ImplicitlyUnwrappedOptional<Int>"): Example("let x: Int!"),
-//            Example("let x: ImplicitlyUnwrappedOptional< Int >"): Example("let x: Int!"),
 //            Example("func x(a: Array<Int>, b: Int) -> [Int: Any]"): Example("func x(a: [Int], b: Int) -> [Int: Any]"),
 //            Example("func x(a: [Int], b: Int) -> Dictionary<Int, String>"):
 //                Example("func x(a: [Int], b: Int) -> [Int: String]"),
@@ -134,14 +135,27 @@ public struct SyntacticSugarRule: CorrectableRule, ConfigurationProviderRule, Au
                       return
                   }
 
-            correctedContents = correctedContents.replacingCharacters(in: rightRange, with: "]")
+            switch violation.correction.correction {
+            case .array:
+                correctedContents = correctedContents.replacingCharacters(in: rightRange, with: "]")
+                correctedContents = correctedContents.replacingCharacters(in: leftRange, with: "[")
 
-            if case let .dictionary(start, end) = correction.correction {
+            case let .dictionary(start, end):
+
+                correctedContents = correctedContents.replacingCharacters(in: rightRange, with: "]")
                 guard let commaRange = stringView.NSRange(start: start, end: end) else { return }
                 correctedContents = correctedContents.replacingCharacters(in: commaRange, with: ": ")
-            }
 
-            correctedContents = correctedContents.replacingCharacters(in: leftRange, with: "[")
+                correctedContents = correctedContents.replacingCharacters(in: leftRange, with: "[")
+
+            case .optional:
+                correctedContents = correctedContents.replacingCharacters(in: rightRange, with: "?")
+                correctedContents = correctedContents.replacingCharacters(in: leftRange, with: "")
+
+            case .implicitlyUnwrappedOptional:
+                correctedContents = correctedContents.replacingCharacters(in: rightRange, with: "!")
+                correctedContents = correctedContents.replacingCharacters(in: leftRange, with: "")
+            }
 
             corrections.append(Correction(ruleDescription: Self.description, location:
                                             Location(file: file, byteOffset: ByteCount(correction.leftStart.utf8Offset))))
@@ -192,6 +206,7 @@ private struct SyntacticSugarRuleViolation {
         case optional
         case dictionary(commaStart: AbsolutePosition, commaEnd: AbsolutePosition)
         case array
+        case implicitlyUnwrappedOptional
     }
 
     //
@@ -299,6 +314,12 @@ private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
                 if simpleType.name.text.isEqualTo("Dictionary") {
                     guard let comma = generic.arguments.first?.trailingComma else { return nil }
                     type = .dictionary(commaStart: comma.position, commaEnd: comma.endPosition)
+                }
+                if simpleType.name.text.isEqualTo("Optional") {
+                    type = .optional
+                }
+                if simpleType.name.text.isEqualTo("ImplicitlyUnwrappedOptional") {
+                    type = .implicitlyUnwrappedOptional
                 }
 
                 return SyntacticSugarRuleViolation(
