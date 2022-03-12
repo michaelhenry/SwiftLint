@@ -10,7 +10,7 @@ private func warnSyntaxParserFailureOnce() {
     _ = warnSyntaxParserFailureOnceImpl
 }
 
-public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProviderRule, AutomaticTestableRule {
+public struct SyntacticSugarRule: CorrectableRule, ConfigurationProviderRule, AutomaticTestableRule {
     public var configuration = SeverityConfiguration(.warning)
 
     public init() {}
@@ -67,8 +67,8 @@ public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProv
             Example("typealias Document = ↓Dictionary<String, T?>"),
             Example("func x(_ y: inout ↓Array<T>)")
         ],
-        corrections: [:
-//            Example("let x: Array<String>"): Example("let x: [String]"),
+        corrections: [
+            Example("let x: Array<String>"): Example("let x: [String]")
 //            Example("let x: Array< String >"): Example("let x: [String]"),
 //            Example("let x: Dictionary<Int, String>"): Example("let x: [Int: String]"),
 //            Example("let x: Dictionary<Int , String>"): Example("let x: [Int : String]"),
@@ -109,12 +109,40 @@ public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProv
         }
     }
 
-    public func violationRanges(in file: SwiftLintFile) -> [NSRange] {
-        return []
-    }
+    public func correct(file: SwiftLintFile) -> [Correction] {
+        guard let tree = file.syntaxTree else {
+            warnSyntaxParserFailureOnce()
+            return []
+        }
+        let visitor = SyntacticSugarRuleVisitor()
+        visitor.walk(tree)
 
-    public func substitution(for violationRange: NSRange, in file: SwiftLintFile) -> (NSRange, String)? {
-        return nil
+        let stringView = file.stringView
+        var correctedContents = file.contents
+
+        var corrections: [Correction] = []
+
+        let soredViolations = visitor.violations.sorted(by: { $0.correction.type > $1.correction.type })
+        soredViolations.forEach { violation in
+            let correction = violation.correction
+
+            guard let violationNSRange = stringView.NSRange(start: correction.left, end: correction.rightEnd),
+                  file.ruleEnabled(violatingRange: violationNSRange, for: self) != nil else { return }
+
+            guard let rightRange = stringView.NSRange(start: correction.rightStart, end: correction.rightEnd),
+                  let leftRange = stringView.NSRange(start: correction.type, end: correction.leftEnd) else {
+                      return
+                  }
+            correctedContents = correctedContents.replacingCharacters(in: rightRange, with: "]")
+            correctedContents = correctedContents.replacingCharacters(in: leftRange, with: "[")
+
+            corrections.append(Correction(ruleDescription: Self.description, location:
+                                            Location(file: file, byteOffset: ByteCount(correction.left.utf8Offset))))
+        }
+
+        file.write(correctedContents)
+
+        return corrections
     }
 
     private func message(for originalType: String) -> String {
@@ -143,8 +171,29 @@ public struct SyntacticSugarRule: SubstitutionCorrectableRule, ConfigurationProv
 }
 
 private struct SyntacticSugarRuleViolation {
+    struct Correction {
+        let type: AbsolutePosition
+        let left: AbsolutePosition
+        let right: AbsolutePosition
+        let correction: CorrectionType
+
+        var rightStart: AbsolutePosition { right }
+        var rightEnd: AbsolutePosition { AbsolutePosition(utf8Offset: right.utf8Offset + 1) }
+
+        var leftStart: AbsolutePosition { left }
+        var leftEnd: AbsolutePosition { AbsolutePosition(utf8Offset: left.utf8Offset + 1) }
+    }
+    enum CorrectionType {
+        case optional
+        case dictionary
+        case array
+    }
+
+    //
     let position: AbsolutePosition
     let type: String
+
+    let correction: Correction
 }
 
 private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
@@ -214,7 +263,12 @@ private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
 
             violations.append(SyntacticSugarRuleViolation(
                 position: firstToken.positionAfterSkippingLeadingTrivia,
-                type: tokensText))
+                type: tokensText,
+                correction: .init(type: .init(utf8Offset: 0),
+                                  left: .init(utf8Offset: 0),
+                                  right: .init(utf8Offset: 0),
+                                  correction: .optional)
+            ))
             return
         }
 
@@ -232,9 +286,15 @@ private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
 
         if let simpleType = typeSyntax?.as(SimpleTypeIdentifierSyntax.self) {
             if types.contains(simpleType.name.text) {
-                guard simpleType.genericArgumentClause != nil else { return nil }
-                return SyntacticSugarRuleViolation(position: simpleType.positionAfterSkippingLeadingTrivia,
-                                                   type: simpleType.name.text)
+                guard let generic = simpleType.genericArgumentClause else { return nil }
+                return SyntacticSugarRuleViolation(
+                    position: simpleType.positionAfterSkippingLeadingTrivia,
+                    type: simpleType.name.text,
+                    correction: .init(type: simpleType.position,
+                                      left: generic.leftAngleBracket.position,
+                                      right: generic.rightAngleBracket.position,
+                                      correction: .array)
+                )
             }
 
             // If there's no type let's check all inner generics like in case of Box<Array<T>>
@@ -250,8 +310,14 @@ private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
             guard types.contains(memberType.name.text) else { return nil }
 
             guard memberType.genericArgumentClause != nil else { return nil }
-            return SyntacticSugarRuleViolation(position: memberType.positionAfterSkippingLeadingTrivia,
-                                               type: memberType.name.text)
+            return SyntacticSugarRuleViolation(
+                position: memberType.positionAfterSkippingLeadingTrivia,
+                type: memberType.name.text,
+                correction: .init(type: .init(utf8Offset: 0),
+                                  left: .init(utf8Offset: 0),
+                                  right: .init(utf8Offset: 0),
+                                  correction: .optional)
+            )
         }
         return nil
     }
@@ -268,5 +334,22 @@ private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
     }
     override func visitAnyPost(_ node: Syntax) {
         level -= 1
+    }
+}
+
+private extension StringView {
+    func NSRange(start: AbsolutePosition, end: AbsolutePosition) -> NSRange? {
+        return NSRange(start: start, length: end.utf8Offset - start.utf8Offset)
+    }
+
+    private func NSRange(start: AbsolutePosition, length: Int) -> NSRange? {
+        let byteRange = ByteRange(location: ByteCount(start.utf8Offset), length: ByteCount(length))
+        return byteRangeToNSRange(byteRange)
+    }
+}
+
+private extension String {
+    func replacingCharacters(in range: NSRange, with replacement: String) -> String {
+        return (self.bridge()).replacingCharacters(in: range, with: replacement)
     }
 }
