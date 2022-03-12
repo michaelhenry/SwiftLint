@@ -68,8 +68,9 @@ public struct SyntacticSugarRule: CorrectableRule, ConfigurationProviderRule, Au
             Example("func x(_ y: inout ↓Array<T>)")
         ],
         corrections: [
-            Example("let x: Array<String>"): Example("let x: [String]")
-//            Example("let x: Array< String >"): Example("let x: [String]"),
+            Example("let x: Array<String>"): Example("let x: [String]"),
+            Example("let x: Array< String >"): Example("let x: [String]"),
+            Example("let x: Array<String> = []"): Example("let x: [String] = []")
 //            Example("let x: Dictionary<Int, String>"): Example("let x: [Int: String]"),
 //            Example("let x: Dictionary<Int , String>"): Example("let x: [Int : String]"),
 //            Example("let x: Optional<Int>"): Example("let x: Int?"),
@@ -173,15 +174,15 @@ public struct SyntacticSugarRule: CorrectableRule, ConfigurationProviderRule, Au
 private struct SyntacticSugarRuleViolation {
     struct Correction {
         let type: AbsolutePosition
-        let left: AbsolutePosition
-        let right: AbsolutePosition
+        var left: AbsolutePosition { leftStart }
+        var right: AbsolutePosition { rightStart }
         let correction: CorrectionType
 
-        var rightStart: AbsolutePosition { right }
-        var rightEnd: AbsolutePosition { AbsolutePosition(utf8Offset: right.utf8Offset + 1) }
+        let rightStart: AbsolutePosition
+        let rightEnd: AbsolutePosition
 
-        var leftStart: AbsolutePosition { left }
-        var leftEnd: AbsolutePosition { AbsolutePosition(utf8Offset: left.utf8Offset + 1) }
+        let leftStart: AbsolutePosition
+        let leftEnd: AbsolutePosition
     }
     enum CorrectionType {
         case optional
@@ -265,9 +266,11 @@ private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
                 position: firstToken.positionAfterSkippingLeadingTrivia,
                 type: tokensText,
                 correction: .init(type: .init(utf8Offset: 0),
-                                  left: .init(utf8Offset: 0),
-                                  right: .init(utf8Offset: 0),
-                                  correction: .optional)
+                                  correction: .optional,
+                                  rightStart: .init(utf8Offset: 0),
+                                  rightEnd: .init(utf8Offset: 0),
+                                  leftStart: .init(utf8Offset: 0),
+                                  leftEnd: .init(utf8Offset: 0))
             ))
             return
         }
@@ -287,13 +290,16 @@ private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
         if let simpleType = typeSyntax?.as(SimpleTypeIdentifierSyntax.self) {
             if types.contains(simpleType.name.text) {
                 guard let generic = simpleType.genericArgumentClause else { return nil }
+
                 return SyntacticSugarRuleViolation(
                     position: simpleType.positionAfterSkippingLeadingTrivia,
                     type: simpleType.name.text,
                     correction: .init(type: simpleType.position,
-                                      left: generic.leftAngleBracket.position,
-                                      right: generic.rightAngleBracket.position,
-                                      correction: .array)
+                                      correction: .array,
+                                      rightStart: generic.arguments.last!.endPositionBeforeTrailingTrivia,
+                                      rightEnd: generic.rightAngleBracket.endPositionBeforeTrailingTrivia,
+                                      leftStart: generic.leftAngleBracket.position,
+                                      leftEnd: generic.leftAngleBracket.endPosition)
                 )
             }
 
@@ -314,9 +320,11 @@ private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
                 position: memberType.positionAfterSkippingLeadingTrivia,
                 type: memberType.name.text,
                 correction: .init(type: .init(utf8Offset: 0),
-                                  left: .init(utf8Offset: 0),
-                                  right: .init(utf8Offset: 0),
-                                  correction: .optional)
+                                  correction: .optional,
+                                  rightStart: .init(utf8Offset: 0),
+                                  rightEnd: .init(utf8Offset: 0),
+                                  leftStart: .init(utf8Offset: 0),
+                                  leftEnd: .init(utf8Offset: 0))
             )
         }
         return nil
