@@ -70,8 +70,7 @@ public struct SyntacticSugarRule: CorrectableRule, ConfigurationProviderRule, Au
         corrections: [
             Example("let x: Array<String>"): Example("let x: [String]"),
             Example("let x: Array< String >"): Example("let x: [String]"),
-            Example("let x: Array<String> = []"): Example("let x: [String] = []")
-//            Example("let x: Dictionary<Int, String>"): Example("let x: [Int: String]"),
+            Example("let x: Dictionary<Int, String>"): Example("let x: [Int: String]")
 //            Example("let x: Dictionary<Int , String>"): Example("let x: [Int : String]"),
 //            Example("let x: Optional<Int>"): Example("let x: Int?"),
 //            Example("let x: Optional< Int >"): Example("let x: Int?"),
@@ -127,18 +126,25 @@ public struct SyntacticSugarRule: CorrectableRule, ConfigurationProviderRule, Au
         soredViolations.forEach { violation in
             let correction = violation.correction
 
-            guard let violationNSRange = stringView.NSRange(start: correction.left, end: correction.rightEnd),
+            guard let violationNSRange = stringView.NSRange(start: correction.leftStart, end: correction.rightEnd),
                   file.ruleEnabled(violatingRange: violationNSRange, for: self) != nil else { return }
 
             guard let rightRange = stringView.NSRange(start: correction.rightStart, end: correction.rightEnd),
                   let leftRange = stringView.NSRange(start: correction.type, end: correction.leftEnd) else {
                       return
                   }
+
             correctedContents = correctedContents.replacingCharacters(in: rightRange, with: "]")
+
+            if case let .dictionary(start, end) = correction.correction {
+                guard let commaRange = stringView.NSRange(start: start, end: end) else { return }
+                correctedContents = correctedContents.replacingCharacters(in: commaRange, with: ": ")
+            }
+
             correctedContents = correctedContents.replacingCharacters(in: leftRange, with: "[")
 
             corrections.append(Correction(ruleDescription: Self.description, location:
-                                            Location(file: file, byteOffset: ByteCount(correction.left.utf8Offset))))
+                                            Location(file: file, byteOffset: ByteCount(correction.leftStart.utf8Offset))))
         }
 
         file.write(correctedContents)
@@ -174,19 +180,17 @@ public struct SyntacticSugarRule: CorrectableRule, ConfigurationProviderRule, Au
 private struct SyntacticSugarRuleViolation {
     struct Correction {
         let type: AbsolutePosition
-        var left: AbsolutePosition { leftStart }
-        var right: AbsolutePosition { rightStart }
         let correction: CorrectionType
-
-        let rightStart: AbsolutePosition
-        let rightEnd: AbsolutePosition
 
         let leftStart: AbsolutePosition
         let leftEnd: AbsolutePosition
+
+        let rightStart: AbsolutePosition
+        let rightEnd: AbsolutePosition
     }
     enum CorrectionType {
         case optional
-        case dictionary
+        case dictionary(commaStart: AbsolutePosition, commaEnd: AbsolutePosition)
         case array
     }
 
@@ -267,10 +271,10 @@ private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
                 type: tokensText,
                 correction: .init(type: .init(utf8Offset: 0),
                                   correction: .optional,
-                                  rightStart: .init(utf8Offset: 0),
-                                  rightEnd: .init(utf8Offset: 0),
                                   leftStart: .init(utf8Offset: 0),
-                                  leftEnd: .init(utf8Offset: 0))
+                                  leftEnd: .init(utf8Offset: 0),
+                                  rightStart: .init(utf8Offset: 0),
+                                  rightEnd: .init(utf8Offset: 0))
             ))
             return
         }
@@ -291,15 +295,22 @@ private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
             if types.contains(simpleType.name.text) {
                 guard let generic = simpleType.genericArgumentClause else { return nil }
 
+                var type = SyntacticSugarRuleViolation.CorrectionType.array
+                if simpleType.name.text.isEqualTo("Dictionary") {
+                    guard let comma = generic.arguments.first?.trailingComma else { return nil }
+                    type = .dictionary(commaStart: comma.position, commaEnd: comma.endPosition)
+                }
+
                 return SyntacticSugarRuleViolation(
                     position: simpleType.positionAfterSkippingLeadingTrivia,
                     type: simpleType.name.text,
                     correction: .init(type: simpleType.position,
-                                      correction: .array,
-                                      rightStart: generic.arguments.last!.endPositionBeforeTrailingTrivia,
-                                      rightEnd: generic.rightAngleBracket.endPositionBeforeTrailingTrivia,
+                                      correction: type,
                                       leftStart: generic.leftAngleBracket.position,
-                                      leftEnd: generic.leftAngleBracket.endPosition)
+                                      leftEnd: generic.leftAngleBracket.endPosition,
+                                      rightStart: generic.arguments.last!.endPositionBeforeTrailingTrivia,
+                                      rightEnd: generic.rightAngleBracket.endPositionBeforeTrailingTrivia
+                                      )
                 )
             }
 
@@ -321,10 +332,10 @@ private final class SyntacticSugarRuleVisitor: SyntaxAnyVisitor {
                 type: memberType.name.text,
                 correction: .init(type: .init(utf8Offset: 0),
                                   correction: .optional,
-                                  rightStart: .init(utf8Offset: 0),
-                                  rightEnd: .init(utf8Offset: 0),
                                   leftStart: .init(utf8Offset: 0),
-                                  leftEnd: .init(utf8Offset: 0))
+                                  leftEnd: .init(utf8Offset: 0),
+                                  rightStart: .init(utf8Offset: 0),
+                                  rightEnd: .init(utf8Offset: 0))
             )
         }
         return nil
